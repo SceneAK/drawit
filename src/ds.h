@@ -16,7 +16,7 @@
 		size_t len;                                                                                     \
 		type elems[];                                                                                   \
 	};                                                                                                      \
-	NO_DISCARD static inline struct name *name##_create(size_t capacity)                                               \
+	NO_DISCARD static inline struct name *name##_create(size_t capacity)                                    \
 	{                                                                                                       \
 		assert(capacity != 0);                                                                          \
 		struct name *alloc = (struct name *)calloc(1, sizeof(struct name) + capacity * sizeof(type));   \
@@ -26,7 +26,7 @@
 			alloc->capacity = capacity;                                                             \
 		return alloc;                                                                                   \
 	}                                                                                                       \
-	NO_DISCARD static inline struct name *name##_append(struct name *da, type elem)                                    \
+	NO_DISCARD static inline struct name *name##_append(struct name *da, type elem)                         \
 	{                                                                                                       \
 		if (da->len >= da->capacity)                                                                    \
 		{                                                                                               \
