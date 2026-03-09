@@ -9,6 +9,9 @@
 #include <nanovg/nanovg.h>
 #include <nanovg/nanovg_gl.h>
 
+#define PFH_IMPLEMENTATION
+#include <perfect-freehand-c/perfect_freehand.h>
+
 #include "ds.h"
 
 #define ARRAY_SIZE(arr) (sizeof(arr) / sizeof(arr[0]))
@@ -120,6 +123,7 @@ void cleanup(void)
 	gladLoaderUnloadGL();
 	nvgDeleteGL3(vg);
 }
+
 void event(const sapp_event *e)
 {
 	switch(e->type) {

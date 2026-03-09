@@ -29,14 +29,27 @@ typedef struct pfh_stroke_point {
 	float running_length;
 } pfh_stroke_point;
 
-size_t pfh_get_stroke(pfh_vec2 dest[], size_t dest_max, const pfh_point pts[], size_t pts_len, const pfh_stroke_opts *opts);
-size_t pfh_get_stroke_points(pfh_stroke_point dest[], size_t dest_max, const pfh_point pts[], size_t pts_len, const pfh_stroke_opts *opts);
-size_t pfh_get_stroke_outline_points(pfh_vec2 dest[], size_t dest_max, const pfh_stroke_point pts[], size_t pts_len, const pfh_stroke_opts *opts);
+typedef struct {
+	size_t capacity;
+	size_t len;
+	pfh_vec2 *elems;
+} pfh_vec2_buff;
+
+typedef struct {
+	size_t capacity;
+	size_t len;
+	pfh_stroke_point *elems;
+} pfh_stroke_point_buff;
+
+void pfh_get_stroke(pfh_vec2_buff *dest, const pfh_point pts[], size_t pts_len, const pfh_stroke_opts *opts);
+void pfh_get_stroke_points(pfh_stroke_point_buff *dest, const pfh_point pts[], size_t pts_len, const pfh_stroke_opts *opts);
+void pfh_get_stroke_outline_points(pfh_vec2_buff *dest, size_t *dest_capacity, const pfh_stroke_point_buff *stroke_pts, const pfh_stroke_opts *opts);
 
 #ifdef PFH_IMPLEMENTATION
 #include <math.h>
 #include <limits.h>
 #include <float.h>
+#include <assert.h>
 
 #define PFH_END_NOISE_THRESHOLD 3
 #define PFH_MIN_STREAMLINE_T 0.15
@@ -52,8 +65,33 @@ size_t pfh_get_stroke_outline_points(pfh_vec2 dest[], size_t dest_max, const pfh
 #define PFH_TAPER_NONE 0
 #define PFH_TAPER_MAX FLT_MAX
 
+#ifndef pfh_realloc
+	#include <stdlib.h>
+	#define pfh_realloc(ptr, size) realloc(ptr, size)
+#endif
+
+#define PFH_BUFF_GROW_FACTOR 2
+#define PFH_BUFF_INIT_CAPACITY 64
+#define pfh_max(a, b) ( a > b ? a : b )
+#define pfh_buff_push(buff, elem)                                          \
+	do                                                                 \
+	{                                                                  \
+		if ((buff)->len >= (buff)->capacity)                       \
+		{                                                          \
+			if ((buff)->capacity == 0)                         \
+				(buff)->capacity = PFH_BUFF_INIT_CAPACITY; \
+                                                                           \
+			(buff)->capacity *= PFH_BUFF_GROW_FACTOR;          \
+			(buff)->elems = pfh_realloc(                       \
+			    (buff)->elems,                                 \
+			    (buff)->capacity * sizeof(*(buff)->elems));    \
+			assert((buff)->elems && "OOM. buy more ram lol");  \
+		}                                                          \
+		(buff)->elems[(buff)->len++] = (elem);                     \
+	} while (0)
+
 // Placeholder for initial vector & creating 2nd point when only one is provided.
-const pfh_vec2 UNIT_OFFSET = {1, 1};
+static const pfh_vec2 UNIT_OFFSET = {1, 1};
 
 static inline float pfh_vec2_len(pfh_vec2 a) { return hypotf(a.x, a.y); }
 static inline pfh_vec2 pfh_vec2_add(pfh_vec2 a, pfh_vec2 b) { return (pfh_vec2) { a.x + b.x, a.y + b.y }; }
@@ -99,7 +137,7 @@ static inline pfh_vec2 pfh_vec2_rot_around(pfh_vec2 A, pfh_vec2 C, float r)
 }
 
 //TODO
-size_t pfh_get_stroke(pfh_vec2 dest[], size_t dest_max, const pfh_point pts[], size_t pts_len, const pfh_stroke_opts *opts)
+void pfh_get_stroke(pfh_vec2_buff *dest, const pfh_point pts[], size_t pts_len, const pfh_stroke_opts *opts)
 {
 	pfh_get_stroke_points(NULL, 0, pts, pts_len, opts);
 	getStrokeOutlinePoints();
@@ -109,9 +147,9 @@ size_t pfh_get_stroke(pfh_vec2 dest[], size_t dest_max, const pfh_point pts[], s
 /**
  * @brief Get an array of points as objects with an adjusted point, pressure, vector, distance, and running_length.
  */
-size_t pfh_get_stroke_points(pfh_stroke_point dest[], size_t dest_max, const pfh_point pts[], size_t pts_len, const pfh_stroke_opts *opts) 
+void pfh_get_stroke_points(pfh_stroke_point_buff *dest, const pfh_point pts[], size_t pts_len, const pfh_stroke_opts *opts)
 {
-	if (pts_len == 0 || dest_max < 1)
+	if (pts_len == 0 || dest->capacity < 1)
 		return;
 
 	// interpolation level between points.
@@ -123,28 +161,28 @@ size_t pfh_get_stroke_points(pfh_stroke_point dest[], size_t dest_max, const pfh
 	// fix urself, i'm not allocating shi
 	*/
 
-	int dest_len = 0;
-	dest[dest_len++] = (pfh_stroke_point){
+	dest->len = 0; // reset (maybe provide options to no reset?)
+	pfh_buff_push(dest, ((pfh_stroke_point){
 		.point = pts[0],
 		.vector = {1, 1},
 		.distance = 0,
 		.running_length = 0,
-	};
+	}));
 
 	bool reached_min_len = false;
 	float running_length = 0;
 
 	const max = pts_len - 1;
-	for (int i = 1; i < pts_len && dest_len < dest_max; i++) {
-		pfh_stroke_point *prev = dest + dest_len - 1;
+	for (int i = 1; i < pts_len && dest->len < dest->capacity; i++) {
+		pfh_stroke_point *prev = dest + dest->len - 1;
 		pfh_point point = (opts->is_complete && i == max) ?
-		    pts[i] : // just add last point. otherwise, interpolate a new point with t
-		    (pfh_point){ pfh_vec2_lrp(prev->point.coord, pts[i].coord, t), pts[i].pressure };
+			pts[pts_len-1] : // just add last point. otherwise, interpolate a new point with t
+			(pfh_point){ pfh_vec2_lrp(prev->point.coord, stroke_pts[i].coord, t), stroke_pts[i].pressure };
 
 		if (pfh_vec2_equal(prev->point.coord, point.coord)) 
 			continue;
 
-		float dist = pfh_vec2_dist(point.coord, pts[i].coord);
+		float dist = pfh_vec2_dist(point.coord, stroke_pts[i].coord);
 		running_length += dist;
 
 		// Avoid noise
@@ -157,16 +195,16 @@ size_t pfh_get_stroke_points(pfh_stroke_point dest[], size_t dest_max, const pfh
 		// Create a new pfh_stroke_point (it will be the new "previous" one).
 		pfh_vec2 vec_diff = pfh_vec2_sub(prev->point.coord, point.coord);
 
-		dest[dest_len++] = (pfh_stroke_point){
+		pfh_buff_push(dest, ((pfh_stroke_point){
 			.point = point,
 			.vector = uni(vec_diff),
 			.distance = dist,
 			running_length,
-		};
+		}));
 	}
 
-	dest[0].vector = dest_len > 1 ? dest[1].vector : (pfh_vec2){0, 0};
-	return dest_len;
+	dest->elems[0].vector = dest->len > 1 ? dest->elems[1].vector : (pfh_vec2){0, 0};
+	return;
 }
 
 static inline size_t pfh_draw_dot(pfh_vec2 dest[], size_t max, pfh_vec2 center, float radius)
@@ -245,8 +283,8 @@ static inline float pfh_simulate_pressure(float prev_pressure, float distance, f
 	float speed = fminf(1, distance / size);
 	float rate = fminf(1, 1 - speed);
 	return fminf(
-	    1,
-	    prev_pressure + (rate - prev_pressure) * (speed * PFH_RATE_OF_PRESSURE_CHANGE
+		1,
+		prev_pressure + (rate - prev_pressure) * (speed * PFH_RATE_OF_PRESSURE_CHANGE
 	));
 }
 
@@ -254,15 +292,15 @@ static inline float pfh_simulate_pressure(float prev_pressure, float distance, f
  * Compute by averaging the first few points.
  * This prevents "fat starts" since drawn lines almost always start slow.
  */
-static inline float pfh_compute_initial_pressure(pfh_stroke_point pts[], size_t len, bool should_simulate_pressure, float size)
+static inline float pfh_compute_initial_pressure(pfh_stroke_point stroke_pts[], size_t len, bool should_simulate_pressure, float size)
 {
-	float accumulator = pts[0].point.pressure;
+	float accumulator = stroke_pts[0].point.pressure;
 
 	const int limit = len < 10 ? len : 10;
 	for (int i = 0; i < limit; i++) {
-		float curr = pts[i].point.pressure;
+		float curr = stroke_pts[i].point.pressure;
 		if (should_simulate_pressure)
-			curr = pfh_simulate_pressure(accumulator, pts[i].distance, size);
+			curr = pfh_simulate_pressure(accumulator, stroke_pts[i].distance, size);
 		accumulator = (accumulator + curr)/2.0f;
 	}
 	return accumulator;
@@ -305,37 +343,34 @@ static inline float pfh_get_stroke_radius(float size, float thinning, float pres
  *   end = {},
  *   last: is_complete = false,
  */
-size_t pfh_get_stroke_outline_points(pfh_vec2 dest[], size_t dest_max, const pfh_stroke_point pts[], size_t pts_len, const pfh_stroke_opts *opts)
+void pfh_get_stroke_outline_points(pfh_vec2_buff *dest, size_t *dest_capacity, const pfh_stroke_point stroke_pts[], size_t stroke_pts_len, const pfh_stroke_opts *opts)
 {
 	//   const {
-	//     size = 16,
-	//     smoothing = 0.5,
-	//     thinning = 0.5,
-	//     simulate_pressure: shouldSimulatePressure = true,
-	//     easing = (t) => t,
-	//     start = {},
-	//     end = {},
-	//     last: is_complete = false,
+	//	 size = 16,
+	//	 smoothing = 0.5,
+	//	 thinning = 0.5,
+	//	 simulate_pressure: shouldSimulatePressure = true,
+	//	 easing = (t) => t,
+	//	 start = {},
+	//	 end = {},
+	//	 last: is_complete = false,
 	//   } = options
 	// const { cap: capStart = true, easing: taperStartEase = (t) => t * (2 - t) } = start;
 	// const { cap: opts->end.cap = true, easing: taperEndEase = (t) => --t * t * t + 1 } = end;
 
-	if (pts_len == 0 || opts->size <= 0 || dest_max < 1)
+	if (stroke_pts_len == 0 || opts->size <= 0)
 		return 0;
 
-	const float total_length = pts[pts_len - 1].running_length;
+	const float total_length = stroke_pts[stroke_pts_len - 1].running_length;
 
 	const float taper_start = pfh_compute_taper_distance(opts->start.taper, opts->size, total_length);
 	const float taper_end = pfh_compute_taper_distance(opts->end.taper, opts->size, total_length);
 
 	const double min_dist = pow(opts->size * opts->smoothing, 2); // The minimum allowed distance between pts (squared)
 
-	pfh_vec2 left_pts[1];
-	pfh_vec2 right_pts[1];
-
 	float prev_pressure = pfh_compute_initial_pressure(
-		pts,
-		pts_len,
+		stroke_pts,
+		stroke_pts_len,
 		opts->simulate_pressure,
 		opts->size
 	);
@@ -343,14 +378,14 @@ size_t pfh_get_stroke_outline_points(pfh_vec2 dest[], size_t dest_max, const pfh
 	float radius = pfh_get_stroke_radius(
 		opts->size,
 		opts->thinning,
-		pts[pts_len - 1].point.pressure,
+		stroke_pts[stroke_pts_len - 1].point.pressure,
 		opts->easing
 	);
 
 	float first_radius = -1;
-	pfh_vec2 prev_vec = pts[0].vector;
+	pfh_vec2 prev_vec = stroke_pts[0].vector;
 
-	pfh_vec2 prev_left_pt = pts[0].point.coord;
+	pfh_vec2 prev_left_pt = stroke_pts[0].point.coord;
 	pfh_vec2 prev_right_pt = prev_left_pt;
 
 	pfh_vec2 tmp_left_pt = prev_left_pt;
@@ -364,13 +399,13 @@ size_t pfh_get_stroke_outline_points(pfh_vec2 dest[], size_t dest_max, const pfh
 	Find the outline's left and right pts
 	skipping the first and last points, which will get caps later on.
 	*/
-	for (int i = 0; i < pts_len; i++) {
+	for (int i = 0; i < stroke_pts_len; i++) {
 		// let { pressure } = pts[i]
 		// const { point, vector, distance, running_length } = pts[i]
-		const is_last_pt = i == pts_len - 1;
+		const is_last_pt = i == stroke_pts_len - 1;
 
 		// Removes noise from the end of the line
-		if (!is_last_pt && total_length - pts[i].running_length < PFH_END_NOISE_THRESHOLD)
+		if (!is_last_pt && total_length - stroke_pts[i].running_length < PFH_END_NOISE_THRESHOLD)
 			continue;
 
 		/*
@@ -381,9 +416,9 @@ size_t pfh_get_stroke_outline_points(pfh_vec2 dest[], size_t dest_max, const pfh
 		pressure.
 		*/
 		if (opts->thinning) {
-			float pressure = pts[i].point.pressure;
+			float pressure = stroke_pts[i].point.pressure;
 			if (opts->simulate_pressure)
-				pressure = pfh_simulate_pressure(prev_pressure, pts[i].distance, opts->size);
+				pressure = pfh_simulate_pressure(prev_pressure, stroke_pts[i].distance, opts->size);
 
 			radius = pfh_get_stroke_radius(opts->size, opts->thinning, pressure, opts->easing);
 		} else {
@@ -401,24 +436,24 @@ size_t pfh_get_stroke_outline_points(pfh_vec2 dest[], size_t dest_max, const pfh
 		of the two taper strengths to the radius.
 		*/
 		float taper_start_strength = 1;
-		if (pts[i].running_length < taper_start) {
-			float t = pts[i].running_length / taper_start;
+		if (stroke_pts[i].running_length < taper_start) {
+			float t = stroke_pts[i].running_length / taper_start;
 			taper_start_strength = opts->start.easing
-			? opts->start.easing(t)
-			: pfh_easing_start(t);
+				? opts->start.easing(t)
+				: pfh_easing_start(t);
 		}
 
 		float taper_end_strength = 1;
-		if (total_length - pts[i].running_length < taper_end) {
-			float t = (total_length - pts[i].running_length) / taper_end;
+		if (total_length - stroke_pts[i].running_length < taper_end) {
+			float t = (total_length - stroke_pts[i].running_length) / taper_end;
 			taper_end_strength = opts->end.easing
-			? opts->end.easing(t)
-			: pfh_easing_end(t);
+				? opts->end.easing(t)
+				: pfh_easing_end(t);
 		}
 
 		radius = fmaxf(
-		    PFH_MIN_RADIUS,
-		    radius * fminf(taper_start_strength, taper_end_strength)
+			PFH_MIN_RADIUS,
+			radius * fminf(taper_start_strength, taper_end_strength)
 		);
 
 		/* Add pts to left and right */
@@ -431,9 +466,10 @@ size_t pfh_get_stroke_outline_points(pfh_vec2 dest[], size_t dest_max, const pfh
 		draw a cap at the current point.
 		*/
 
-		pfh_vec2 next_vec = (!is_last_pt ? pts[i + 1] : pts[i]).vector;
-		float next_dot = !is_last_pt ? pfh_vec2_dot(pts[i].vector, next_vec) : 1.0;
-		float prev_dot = pfh_vec2_dot(pts[i].vector, prev_vec);
+		pfh_vec2 next_vec = (!is_last_pt ? stroke_pts[i+1] : stroke_pts[i]).vector;
+
+		float next_dot = !is_last_pt ? pfh_vec2_dot(stroke_pts[i].vector, next_vec) : 1.0;
+		float prev_dot = pfh_vec2_dot(stroke_pts[i].vector, prev_vec);
 
 		bool pt_is_sharp_corner = prev_dot < 0 && !prev_pt_is_sharp_corner;
 		bool next_pt_is_sharp_corner = !isnan(next_dot) && next_dot < 0; // originally it was checking next_dot != null? what?
@@ -448,13 +484,13 @@ size_t pfh_get_stroke_outline_points(pfh_vec2 dest[], size_t dest_max, const pfh
 			const step = 1 / PFH_CORNER_CAP_SEGMENTS;
 			for (float t = 0; t <= 1; t += step) {
 				// Calculate left point: rotate (point - offset) around point
-				tmp_left_pt = pfh_vec2_sub(pts[i].point.coord, offset);
-				tmp_left_pt = pfh_vec2_rot_around(tmp_left_pt, pts[i].point.coord, PFH_FIXED_PI * t);
+				tmp_left_pt = pfh_vec2_sub(stroke_pts[i].point.coord, offset);
+				tmp_left_pt = pfh_vec2_rot_around(tmp_left_pt, stroke_pts[i].point.coord, PFH_FIXED_PI * t);
 				left_pts.push(tmp_left_pt);
 
 				// Calculate right point: rotate (point + offset) around point
-				tmp_right_pt = pfh_vec2_add(pts[i].point.coord, offset);
-				tmp_right_pt = pfh_vec2_rot_around(tmp_right_pt, pts[i].point.coord, PFH_FIXED_PI * -t);
+				tmp_right_pt = pfh_vec2_add(stroke_pts[i].point.coord, offset);
+				tmp_right_pt = pfh_vec2_rot_around(tmp_right_pt, stroke_pts[i].point.coord, PFH_FIXED_PI * -t);
 				right_pts.push(tmp_right_pt);
 			}
 
@@ -471,10 +507,10 @@ size_t pfh_get_stroke_outline_points(pfh_vec2 dest[], size_t dest_max, const pfh
 
 		// Handle the last point
 		if (is_last_pt) {
-			pfh_vec2 offset = pfh_vec2_per(pts[i].vector);
+			pfh_vec2 offset = pfh_vec2_per(stroke_pts[i].vector);
 			offset = pfh_vec2_mul_s(offset, radius);
-			left_pts.push(ptf_vec2_sub(pts[i].vector, offset));
-			right_pts.push(ptf_vec2_sub(pts[i].vector, offset));
+			left_pts.push(ptf_vec2_sub(stroke_pts[i].vector, offset));
+			right_pts.push(ptf_vec2_sub(stroke_pts[i].vector, offset));
 			continue;
 		}
 
@@ -489,26 +525,26 @@ size_t pfh_get_stroke_outline_points(pfh_vec2 dest[], size_t dest_max, const pfh
 		*/
 
 		// Use mutable operations for offset calculation
-		pfh_vec2 offset = pfh_vec2_lrp(next_vec, pts[i].vector, next_dot);
+		pfh_vec2 offset = pfh_vec2_lrp(next_vec, stroke_pts[i].vector, next_dot);
 		offset = pfh_vec2_per(offset);
 		offset = pfh_vec2_mul_s(offset, radius);
 
-		tmp_left_pt = pfh_vec2_sub(pts[i].point.coord, offset);
+		tmp_left_pt = pfh_vec2_sub(stroke_pts[i].point.coord, offset);
 
 		if (i <= 1 || pfh_vec2_dist2(prev_left_pt, tmp_left_pt) > min_dist) {
 			left_pts.push(tmp_left_pt);
 			prev_left_pt = tmp_left_pt;
 		}
 
-		tmp_right_pt = pfh_vec2_add(pts[i].point.coord, offset);
+		tmp_right_pt = pfh_vec2_add(stroke_pts[i].point.coord, offset);
 
 		if (i <= 1 || pfh_vec2_dist2(prev_right_pt, tmp_right_pt) > min_dist) {
 			right_pts.push(tmp_right_pt);
 			prev_right_pt = tmp_right_pt;
 		}
 
-		prev_pressure = pts[i].point.pressure;
-		prev_vec = pts[i].vector;
+		prev_pressure = stroke_pts[i].point.pressure;
+		prev_vec = stroke_pts[i].vector;
 	}
 
 	/*
@@ -519,15 +555,12 @@ size_t pfh_get_stroke_outline_points(pfh_vec2 dest[], size_t dest_max, const pfh
 	may have dots for very short lines.
 	*/
 
-	pfh_vec2 first_point = pts[0].point.coord;
+	pfh_vec2 first_point = stroke_pts[0].point.coord;
 
 	pfh_vec2 last_point =
-	    pts_len > 1
-	    ? pts[pts_len - 1].point.coord
-	    : pfh_vec2_add(pts[0].point.coord, UNIT_OFFSET);
-
-	pfh_vec2 start_cap[2];
-	pfh_vec2 end_cap[2];
+		stroke_pts_len > 1
+		? pts[pts_len - 1].point.coord
+		: pfh_vec2_add(pts[0].point.coord, UNIT_OFFSET);
 
 	if (pts_len == 1) {
 		if (!(taper_start || taper_end) || opts->is_complete) {
