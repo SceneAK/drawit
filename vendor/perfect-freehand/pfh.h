@@ -124,6 +124,16 @@ static pfh_vec2_buff pfh_buff_startcap = {0};
 static pfh_vec2_buff pfh_buff_endcap = {0};
 static pfh_stroke_point_buff pfh_buff_stroke_pts = {0};
 
+
+static inline bool pfh_flt_equal(float a, float b)
+{
+    float diff = fabs(a - b);
+    a = fabs(a);
+    b = fabs(b);
+    return diff <= pfh_max(a, b) * FLT_EPSILON;
+}
+
+
 static inline float pfh_vec2_len(pfh_vec2 a) { return hypotf(a.x, a.y); }
 static inline pfh_vec2 pfh_vec2_add(pfh_vec2 a, pfh_vec2 b) { return (pfh_vec2) { a.x + b.x, a.y + b.y }; }
 static inline pfh_vec2 pfh_vec2_sub(pfh_vec2 a, pfh_vec2 b) { return (pfh_vec2) { a.x - b.x, a.y - b.y }; }
@@ -134,7 +144,7 @@ static inline pfh_vec2 pfh_vec2_uni(pfh_vec2 a) { return pfh_vec2_div_s(a, pfh_v
 static inline pfh_vec2 pfh_vec2_per(pfh_vec2 a) { return  (pfh_vec2){a.y, -a.x}; }
 static inline pfh_vec2 pfh_vec2_neg(pfh_vec2 a) { return  (pfh_vec2){-a.x, -a.y}; }
 static inline pfh_vec2 pfh_vec2_prj(pfh_vec2 a, pfh_vec2 b, float c) { return pfh_vec2_add(a, pfh_vec2_mul_s(b, c)); }
-static inline bool pfh_vec2_equal(pfh_vec2 a, pfh_vec2 b) { return a.x == b.x && a.y == b.y; }
+static inline bool pfh_vec2_equal(pfh_vec2 a, pfh_vec2 b) { return pfh_flt_equal(a.x, b.x) && pfh_flt_equal(a.y, b.y); }
 static inline float pfh_vec2_dot(pfh_vec2 a, pfh_vec2 b) { return a.x * b.x + a.y * b.y; }
 
 static inline float pfh_vec2_dist2(pfh_vec2 from, pfh_vec2 to)
