@@ -77,43 +77,43 @@ void pfh_get_stroke_outline_points(pfh_vec2_buff *dest, const pfh_stroke_point s
 #define PFH_BUFF_INIT_CAPACITY 64
 #define pfh_max(a, b) ( a > b ? a : b )
 #define pfh_buff_reserve(buff, total)                                      \
-	do                                                                 \
-	{                                                                  \
-		if (total >= (buff)->capacity)                             \
-		{                                                          \
-			if ((buff)->capacity == 0)                         \
-				(buff)->capacity = PFH_BUFF_INIT_CAPACITY; \
+        do                                                                 \
+        {                                                                  \
+                if (total >= (buff)->capacity)                             \
+                {                                                          \
+                        if ((buff)->capacity == 0)                         \
+                                (buff)->capacity = PFH_BUFF_INIT_CAPACITY; \
                                                                            \
-			(buff)->capacity *= PFH_BUFF_GROW_FACTOR;          \
-			(buff)->elems = pfh_realloc(                       \
-			    (buff)->elems,                                 \
-			    (buff)->capacity * sizeof(*(buff)->elems));    \
-			assert((buff)->elems && "OOM. buy more ram lol");  \
-		}                                                          \
-	} while (0)
+                        (buff)->capacity *= PFH_BUFF_GROW_FACTOR;          \
+                        (buff)->elems = pfh_realloc(                       \
+                            (buff)->elems,                                 \
+                            (buff)->capacity * sizeof(*(buff)->elems));    \
+                        assert((buff)->elems && "OOM. buy more ram lol");  \
+                }                                                          \
+        } while (0)
 #define pfh_buff_push_raw(buff, elem) (buff)->elems[(buff)->len++] = (elem);
 #define pfh_buff_push(buff, elem)                        \
-	do                                               \
-	{                                                \
-		pfh_buff_reserve(buff, (buff)->len + 1); \
-		pfh_buff_push_raw(buff, elem);           \
-	} while (0)
+        do                                               \
+        {                                                \
+                pfh_buff_reserve(buff, (buff)->len + 1); \
+                pfh_buff_push_raw(buff, elem);           \
+        } while (0)
 #define pfh_buff_left_concat(left, right)                                                                    \
-	do                                                                                                   \
-	{                                                                                                    \
-		pfh_buff_reserve(left, (left)->len + (right)->len);                                          \
-		memcpy((left)->elems + (left)->len, (right)->elems, (right)->len * sizeof(*(right)->elems)); \
-		(left)->len += (right)->len;                                                                 \
-	} while (0)
+        do                                                                                                   \
+        {                                                                                                    \
+                pfh_buff_reserve(left, (left)->len + (right)->len);                                          \
+                memcpy((left)->elems + (left)->len, (right)->elems, (right)->len * sizeof(*(right)->elems)); \
+                (left)->len += (right)->len;                                                                 \
+        } while (0)
 #define pfh_buff_left_concat_reverse(left, right)                   \
-	do                                                          \
-	{                                                           \
-		pfh_buff_reserve(left, (left)->len + (right)->len); \
-		for (size_t i = (right)->len; i-- > 0;)             \
-		{                                                   \
-			pfh_buff_push_raw(left, (right)->elems[i]); \
-		}                                                   \
-	} while (0)
+        do                                                          \
+        {                                                           \
+                pfh_buff_reserve(left, (left)->len + (right)->len); \
+                for (size_t i = (right)->len; i-- > 0;)             \
+                {                                                   \
+                        pfh_buff_push_raw(left, (right)->elems[i]); \
+                }                                                   \
+        } while (0)
 
 // Placeholder for initial vector & creating 2nd point when only one is provided.
 static const pfh_vec2 UNIT_OFFSET = {1, 1};
