@@ -62,6 +62,8 @@ void pfh_get_stroke_outline_points(pfh_vec2_buff *dest, const pfh_stroke_point s
 #define PFH_CORNER_CAP_SEGMENTS 13
 #define PFH_RATE_OF_PRESSURE_CHANGE 0.275
 #define PFH_MIN_RADIUS 0.01
+#define PFH_DEFAULT_PRESSURE 0.5
+#define PFH_DEFAULT_FIRST_PRESSURE 0.25
 
 #define PFH_PI 3.141592653589793
 #define PFH_FIXED_PI (PFH_PI + 0.0001)
@@ -77,6 +79,7 @@ void pfh_get_stroke_outline_points(pfh_vec2_buff *dest, const pfh_stroke_point s
 #define PFH_BUFF_GROW_FACTOR 2
 #define PFH_BUFF_INIT_CAPACITY 64
 #define pfh_max(a, b) ( (a) > (b) ? (a) : (b) )
+#define pfh_valid_pressure(p) (p >= 0)
 #define pfh_buff_reserve(buff, total)                                      \
         do                                                                 \
         {                                                                  \
@@ -197,11 +200,15 @@ void pfh_get_stroke_points(pfh_stroke_point_buff *dest, const pfh_point pts[], s
 	/*
 	 * In the original, this was a part that fixes weirdness with tapering 
 	 * start & end when there's only two points by interpolates new ones.
+	 * I'm not adding it since it requires duplicating pts
 	 */
 
 	dest->len = 0; // reset (maybe provide no reset opt?)
 	pfh_buff_push(dest, ((pfh_stroke_point){
-		.point = pts[0],
+		.point = { 
+			pts[0].coord, 
+			pts[0].pressure >= 0 ? pts[0].pressure : PFH_DEFAULT_FIRST_PRESSURE,
+		},
 		.distance = 0,
 		.vector = {1, 1},
 		.running_length = 0,
@@ -234,7 +241,10 @@ void pfh_get_stroke_points(pfh_stroke_point_buff *dest, const pfh_point pts[], s
 		pfh_vec2 vec_diff = pfh_vec2_sub(prev->point.coord, point.coord);
 
 		pfh_buff_push(dest, ((pfh_stroke_point){
-			.point = point,
+			.point = { 
+				point.coord, 
+				point.pressure >= 0 ? point.pressure : PFH_DEFAULT_PRESSURE,
+			},
 			.vector = pfh_vec2_uni(vec_diff),
 			.distance = dist,
 			.running_length = running_length,
@@ -586,6 +596,3 @@ void pfh_get_stroke_outline_points(pfh_vec2_buff *dest, const pfh_stroke_point s
 
 #endif
 #endif
-
-// TODO: 
-// DEFAULT_PRESSURE for the first point needs to be set. 
