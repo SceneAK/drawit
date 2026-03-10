@@ -5,7 +5,7 @@ VENDOR_DIR = vendor
 BUILD_DIR = build
 
 BUILD ?= DEBUG
-CFLAGS = -Wall -I$(VENDOR_DIR)
+CFLAGS = -Wall -I$(VENDOR_DIR) -fno-strict-aliasing
 
 ifeq ($(BUILD), RELEASE)
 	CFLAGS += -O2

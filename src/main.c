@@ -20,16 +20,16 @@ typedef struct { float x, y; } vec2;
 typedef struct { float x, y, z; } vec3;
 typedef struct { float r, g, b, a; } color;
 
-struct stroke {
-	vec2 point;
-};
+typedef struct { vec2 coord; float pressure; } point;
 
-DA_DEFINE(vec2, vec2_list)
+DA_DEFINE(point, point_list)
 DA_DEFINE(int, int_list)
 
 struct object {
-	struct int_list  *starts;
-	struct vec2_list *points;
+	struct int_list   *input_starts;
+	struct point_list *input_points;
+	struct int_list   *stroke_starts;
+	pfh_vec2_buff     stroke_buff;
 };
 
 DA_DEFINE(struct object, object_list)
@@ -52,7 +52,6 @@ static vec2 pan_pivot_camera;
 
 static bool is_drawing_obj = false;
 static bool is_drawing_stroke = false;
-static const float point_min_dist = 1.0f;
 static struct object_list *objects;
 
 static inline vec2 screen_to_world(vec2 screen)
@@ -73,38 +72,65 @@ void print_objects(void)
 		printf("[%d] Object\n", i);
 
 		obj = objects->elems + i;
-		printf("	Starts (%llu): ", obj->starts->len);
-		for (j = 0; j < obj->starts->len; j++)
- 			printf("%d ", obj->starts->elems[j]);
+		printf("	input_starts (%llu): ", obj->input_starts->len);
+		for (j = 0; j < obj->input_starts->len; j++)
+ 			printf("%d ", obj->input_starts->elems[j]);
+		puts("");
+		printf("	input_points (%llu)\n", obj->input_points->len);
+
+		printf("	stroke_starts (%llu): ", obj->stroke_starts->len);
+		for (j = 0; j < obj->stroke_starts->len; j++)
+ 			printf("%d ", obj->stroke_starts->elems[j]);
 		puts("");
 
-		printf("	Points (%llu)\n", obj->points->len);
-		// for (j = 0; j < obj->points->len; j++)
- 		// 	printf("(%f, %f) ", obj->points->elems[j].x, obj->points->elems[j].y);
-		// puts("");
+		printf("	stroke_elems (%llu): ", obj->stroke_buff.len);
+		for (j = 0; j < obj->stroke_buff.len; j++)
+ 			printf("(%.1f %.1f) ", obj->stroke_buff.elems[j].x, obj->stroke_buff.elems[j].y);
+		puts("");
 	}
 }
 
-void drawing_continue_stroke(vec2 input)
+static const pfh_stroke_opts stroke_opts = {
+	.size = 8,
+	.thinning = .5,
+	.streamline = .5,
+	.smoothing = .5,
+	.easing = NULL,
+	.simulate_pressure = true,
+	.is_complete = false,
+	.start = {
+		.cap = true,
+		.taper = PFH_TAPER_NONE,
+		.easing = NULL,
+	},
+	.end = {
+		.cap = true,
+		.taper = PFH_TAPER_NONE,
+		.easing = NULL,
+	},
+	.last = false,
+};
+void draw_stroke_continue(struct object *obj, vec2 input, float pressure)
 {
-	struct object *obj = objects->elems + objects->len - 1;
-	vec2 dist;
+	size_t last_stroke_start_idx = obj->stroke_starts->elems[obj->stroke_starts->len-1];
+	size_t last_input_start_idx = obj->input_starts->elems[obj->input_starts->len-1];
 
-	if (obj->points->len != 0) {
-		dist.x = input.x - obj->points->elems[obj->points->len-1].x;		
-		dist.y = input.y - obj->points->elems[obj->points->len-1].y;		
+	obj->input_points = point_list_append(obj->input_points, (point){ input, pressure });
 
-		if (dist.x*dist.x + dist.y*dist.y < point_min_dist*point_min_dist)
-			return;
-	}
-	obj->points = vec2_list_append(obj->points, input);
+	// Regenerate the last stroke completely
+	obj->stroke_buff.len = last_stroke_start_idx;
+	pfh_get_stroke(
+		&obj->stroke_buff, 
+		(pfh_point*)obj->input_points->elems + last_input_start_idx, 
+		obj->input_points->len - last_input_start_idx, 
+		&stroke_opts
+	);
 }
-void drawing_start_stroke(vec2 input)
+void draw_stroke_start(struct object *obj, vec2 input, float pressure)
 {
-	struct object *obj = objects->elems + objects->len - 1;
-
-	drawing_continue_stroke(input);
-	obj->starts = int_list_append(obj->starts, obj->points->len-1);
+	obj->input_starts = int_list_append(obj->input_starts, obj->input_points->len);
+	obj->stroke_starts = int_list_append(obj->stroke_starts, obj->stroke_buff.len);
+	draw_stroke_continue(obj, input, pressure);
 }
 
 
@@ -150,7 +176,11 @@ void event(const sapp_event *e)
 			camera.y = pan_pivot_camera.y + (mouse_screen.y - pan_pivot_mouse.y)/zoom;
 		}
 		if (is_drawing_stroke) {
-			drawing_continue_stroke(screen_to_world( (vec2) { e->mouse_x, e->mouse_y } ));
+			draw_stroke_continue(
+				objects->elems + objects->len-1,
+				screen_to_world( (vec2) { e->mouse_x, e->mouse_y } ),
+				-1
+			);
 		}
 		break;
 	case SAPP_EVENTTYPE_MOUSE_DOWN:
@@ -163,13 +193,20 @@ void event(const sapp_event *e)
 			if (!is_drawing_obj) {
 				is_drawing_obj = true;
 				clear_color = (color) { .13, .2, .13, 1 };
-				objects = object_list_append(objects, (struct object){
-					.points = vec2_list_create(DA_INITIAL_CAPACITY),
-					.starts = int_list_create(DA_INITIAL_CAPACITY)
-				});
+				struct object obj = {
+					.input_points  = point_list_create(DA_INITIAL_CAPACITY),
+					.input_starts  = int_list_create(DA_INITIAL_CAPACITY),
+					.stroke_starts      = int_list_create(DA_INITIAL_CAPACITY),
+				};
+				pfh_vec2_buff_init(&obj.stroke_buff, DA_INITIAL_CAPACITY);
+				objects = object_list_append(objects, obj);
 			}
 			is_drawing_stroke = true;
-			drawing_start_stroke(screen_to_world( (vec2) { e->mouse_x, e->mouse_y } ));
+			draw_stroke_start(
+				objects->elems + objects->len-1,
+				screen_to_world( (vec2) { e->mouse_x, e->mouse_y } ),
+				-1
+			);
 		}
 		break;
 	case SAPP_EVENTTYPE_MOUSE_UP:
@@ -199,23 +236,17 @@ void draw_objects(void)
 	for (i = 0; i < objects->len; i++) {
 		obj = objects->elems + i;
 
-		for (j = k = 0; j < obj->points->len; j++) {
-			if (j != obj->starts->elems[k]) {
-				nvgLineTo(vg, obj->points->elems[j].x, -obj->points->elems[j].y);
+		nvgBeginPath(vg);
+		nvgFillColor(vg, nvgRGBA(204, 255, 0, 255));
+		for (j = k = 0; j < obj->stroke_buff.len; j++) {
+			if (k >= obj->stroke_starts->len || j != obj->stroke_starts->elems[k]) {
+				nvgLineTo(vg, obj->stroke_buff.elems[j].x, -obj->stroke_buff.elems[j].y);
 				continue;
 			}
-			if (j != 0)
-				nvgStroke(vg);
-
-			nvgBeginPath(vg);
-			nvgStrokeWidth(vg, 3);
-			nvgLineCap(vg, NVG_ROUND);
-			nvgLineJoin(vg, NVG_ROUND);
-			nvgStrokeColor(vg, nvgRGBA(204, 255, 0, 255));
-			nvgMoveTo(vg, obj->points->elems[j].x, -obj->points->elems[j].y);
+			nvgMoveTo(vg, obj->stroke_buff.elems[j].x, -obj->stroke_buff.elems[j].y);
 			k++;
 		}
-		nvgStroke(vg);
+		nvgFill(vg);
 	}
 
 }

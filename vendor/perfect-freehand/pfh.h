@@ -43,6 +43,12 @@ typedef struct {
 	pfh_stroke_point *elems;
 } pfh_stroke_point_buff;
 
+void pfh_vec2_buff_init(pfh_vec2_buff *buff, size_t capacity);
+void pfh_vec2_buff_deinit(pfh_vec2_buff *buff);
+
+void pfh_stroke_point_buff_init(pfh_stroke_point_buff *buff, size_t capacity);
+void pfh_stroke_point_buff_deinit(pfh_stroke_point_buff *buff);
+
 void pfh_get_stroke(pfh_vec2_buff *dest, const pfh_point pts[], size_t pts_len, const pfh_stroke_opts *opts);
 void pfh_get_stroke_points(pfh_stroke_point_buff *dest, const pfh_point pts[], size_t pts_len, const pfh_stroke_opts *opts);
 void pfh_get_stroke_outline_points(pfh_vec2_buff *dest, const pfh_stroke_point stroke_pts[], size_t stroke_pts_len, const pfh_stroke_opts *opts);
@@ -74,12 +80,25 @@ void pfh_get_stroke_outline_points(pfh_vec2_buff *dest, const pfh_stroke_point s
 #ifndef pfh_realloc
 	#include <stdlib.h>
 	#define pfh_realloc(ptr, size) realloc(ptr, size)
+	#define pfh_free(ptr) free(ptr)
 #endif
 
 #define PFH_BUFF_GROW_FACTOR 2
 #define PFH_BUFF_INIT_CAPACITY 64
 #define pfh_max(a, b) ( (a) > (b) ? (a) : (b) )
 #define pfh_valid_pressure(p) (p >= 0)
+#define pfh_buff_init(buff, capacity)             \
+	do                                        \
+	{                                         \
+		memset(buff, 0, sizeof(*(buff))); \
+		pfh_buff_reserve(buff, capacity); \
+	} while (0)
+#define pfh_buff_deinit(buff)              \
+	do                                        \
+	{                                         \
+		pfh_free((buff)->elems);          \
+		memset(buff, 0, sizeof(*(buff))); \
+	} while (0)
 #define pfh_buff_reserve(buff, total)                                      \
         do                                                                 \
         {                                                                  \
@@ -127,15 +146,18 @@ static pfh_vec2_buff pfh_buff_startcap = {0};
 static pfh_vec2_buff pfh_buff_endcap = {0};
 static pfh_stroke_point_buff pfh_buff_stroke_pts = {0};
 
+void pfh_vec2_buff_init(pfh_vec2_buff *buff, size_t capacity) { pfh_buff_init(buff, capacity); }
+void pfh_vec2_buff_deinit(pfh_vec2_buff *buff) { pfh_buff_deinit(buff); }
+void pfh_stroke_point_buff_init(pfh_stroke_point_buff *buff, size_t capacity) { pfh_buff_init(buff, capacity); }
+void pfh_stroke_point_buff_deinit(pfh_stroke_point_buff *buff) { pfh_buff_deinit(buff); }
 
 static inline bool pfh_flt_equal(float a, float b)
 {
-    float diff = fabs(a - b);
-    a = fabs(a);
-    b = fabs(b);
-    return diff <= pfh_max(a, b) * FLT_EPSILON;
+	float diff = fabs(a - b);
+	a = fabs(a);
+	b = fabs(b);
+	return diff <= pfh_max(a, b) * FLT_EPSILON;
 }
-
 
 static inline float pfh_vec2_len(pfh_vec2 a) { return hypotf(a.x, a.y); }
 static inline pfh_vec2 pfh_vec2_add(pfh_vec2 a, pfh_vec2 b) { return (pfh_vec2) { a.x + b.x, a.y + b.y }; }
@@ -183,6 +205,7 @@ static inline pfh_vec2 pfh_vec2_rot_around(pfh_vec2 A, pfh_vec2 C, float r)
 
 void pfh_get_stroke(pfh_vec2_buff *dest, const pfh_point pts[], size_t pts_len, const pfh_stroke_opts *opts)
 {
+	pfh_buff_stroke_pts.len = 0;
 	pfh_get_stroke_points(&pfh_buff_stroke_pts, pts, pts_len, opts);
 	pfh_get_stroke_outline_points(dest, pfh_buff_stroke_pts.elems, pfh_buff_stroke_pts.len, opts);
 }
@@ -203,7 +226,6 @@ void pfh_get_stroke_points(pfh_stroke_point_buff *dest, const pfh_point pts[], s
 	 * I'm not adding it since it requires duplicating pts
 	 */
 
-	dest->len = 0; // reset (maybe provide no reset opt?)
 	pfh_buff_push(dest, ((pfh_stroke_point){
 		.point = { 
 			pts[0].coord, 
@@ -218,7 +240,7 @@ void pfh_get_stroke_points(pfh_stroke_point_buff *dest, const pfh_point pts[], s
 	float running_length = 0;
 
 	size_t max = pts_len - 1;
-	for (int i = 1; i < pts_len; i++) {
+	for (size_t i = 1; i < pts_len; i++) {
 		pfh_stroke_point *prev = dest->elems + dest->len - 1;
 		pfh_point point = (opts->is_complete && i == max) ?
 			pts[pts_len-1] :
@@ -293,7 +315,7 @@ static inline void pfh_draw_round_end_cap(pfh_vec2_buff *dest, pfh_vec2 center, 
 	float step = 1.0f / segments;
 
 	pfh_buff_reserve(dest, dest->len + segments);
-	for (float t = step; t < 1; t += step)
+	for (float t = step; t <= 1; t += step)
 		pfh_buff_push(dest, pfh_vec2_rot_around(start, center, PFH_FIXED_PI * 3 * t));
 }
 
@@ -318,8 +340,8 @@ static inline float pfh_simulate_pressure(float prev_pressure, float distance, f
 	float speed = fminf(1, distance / size);
 	float rate = fminf(1, 1 - speed);
 	return fminf(
-	    1,
-	    prev_pressure + (rate - prev_pressure) * (speed * PFH_RATE_OF_PRESSURE_CHANGE
+		1,
+		prev_pressure + (rate - prev_pressure) * (speed * PFH_RATE_OF_PRESSURE_CHANGE
 	));
 }
 
@@ -353,7 +375,8 @@ static inline float pfh_easing_start(float t)
 
 static inline float pfh_easing_end(float t)
 {
-	return --t * t * t + 1;
+	t--;
+	return t * t * t + 1;
 }
 
 static inline float pfh_get_stroke_radius(float size, float thinning, float pressure, pfh_easing_fn easing)
@@ -380,9 +403,6 @@ void pfh_get_stroke_outline_points(pfh_vec2_buff *dest, const pfh_stroke_point s
 	const float taper_end = pfh_compute_taper_distance(opts->end.taper, opts->size, total_length);
 
 	const double min_dist = pow(opts->size * opts->smoothing, 2); // The minimum allowed distance between stroke_pts (squared)
-
-	pfh_vec2 left_pts[1];
-	pfh_vec2 right_pts[1];
 
 	float prev_pressure = pfh_compute_initial_pressure(
 		stroke_pts,
@@ -411,7 +431,8 @@ void pfh_get_stroke_outline_points(pfh_vec2_buff *dest, const pfh_stroke_point s
 	// ... so that we don't detect the same corner twice
 	bool prev_pt_is_sharp_corner = false;
 
-	pfh_vec2_buff *pfh_buff_leftpt = dest; // alias for consistency
+	size_t dest_start_len = dest->len;
+
 	/*
 	Find the outline's left and right stroke_pts
 	skipping the first and last points, which will get caps later on.
@@ -453,13 +474,12 @@ void pfh_get_stroke_outline_points(pfh_vec2_buff *dest, const pfh_stroke_point s
 		}
 
 		radius = fmaxf(
-		    PFH_MIN_RADIUS,
-		    radius * fminf(taper_start_strength, taper_end_strength)
+			PFH_MIN_RADIUS,
+			radius * fminf(taper_start_strength, taper_end_strength)
 		);
 
 		/* Add stroke_pts to left and right */
 
-		pfh_buff_leftpt->len = 0;
 		pfh_buff_rightpt.len = 0;
 		pfh_buff_startcap.len = 0;
 		pfh_buff_endcap.len = 0;
@@ -482,7 +502,7 @@ void pfh_get_stroke_outline_points(pfh_vec2_buff *dest, const pfh_stroke_point s
 			for (float t = 0; t <= 1; t += step) {
 				tmp_left_pt = pfh_vec2_sub(stroke_pts[i].point.coord, offset);
 				tmp_left_pt = pfh_vec2_rot_around(tmp_left_pt, stroke_pts[i].point.coord, PFH_FIXED_PI * t);
-				pfh_buff_push(pfh_buff_leftpt, tmp_left_pt);
+				pfh_buff_push(dest, tmp_left_pt);
 
 				tmp_right_pt = pfh_vec2_add(stroke_pts[i].point.coord, offset);
 				tmp_right_pt = pfh_vec2_rot_around(tmp_right_pt, stroke_pts[i].point.coord, PFH_FIXED_PI * -t);
@@ -505,9 +525,10 @@ void pfh_get_stroke_outline_points(pfh_vec2_buff *dest, const pfh_stroke_point s
 			pfh_vec2 offset = pfh_vec2_per(stroke_pts[i].vector);
 			offset = pfh_vec2_mul_s(offset, radius);
 
-			pfh_vec2 sub = pfh_vec2_sub(stroke_pts[i].vector, offset);
-			pfh_buff_push(pfh_buff_leftpt, sub);
-			pfh_buff_push(&pfh_buff_rightpt, sub);
+			pfh_vec2 left_pt = pfh_vec2_sub(stroke_pts[i].point.coord, offset);
+			pfh_vec2 right_pt = pfh_vec2_add(stroke_pts[i].point.coord, offset);
+			pfh_buff_push(dest, left_pt);
+			pfh_buff_push(&pfh_buff_rightpt, right_pt);
 			continue;
 		}
 
@@ -520,7 +541,7 @@ void pfh_get_stroke_outline_points(pfh_vec2_buff *dest, const pfh_stroke_point s
 		tmp_left_pt = pfh_vec2_sub(stroke_pts[i].point.coord, offset);
 
 		if (i <= 1 || pfh_vec2_dist2(prev_left_pt, tmp_left_pt) > min_dist) {
-			pfh_buff_push(pfh_buff_leftpt, tmp_left_pt);
+			pfh_buff_push(dest, tmp_left_pt);
 			prev_left_pt = tmp_left_pt;
 		}
 
@@ -540,9 +561,9 @@ void pfh_get_stroke_outline_points(pfh_vec2_buff *dest, const pfh_stroke_point s
 	pfh_vec2 first_point = stroke_pts[0].point.coord;
 
 	pfh_vec2 last_point =
-	    stroke_pts_len > 1
-	    ? stroke_pts[stroke_pts_len - 1].point.coord
-	    : pfh_vec2_add(stroke_pts[0].point.coord, UNIT_OFFSET);
+		stroke_pts_len > 1
+		? stroke_pts[stroke_pts_len - 1].point.coord
+		: pfh_vec2_add(stroke_pts[0].point.coord, UNIT_OFFSET);
 	
 	if (stroke_pts_len == 1) {
 		if (!(taper_start || taper_end) || opts->is_complete) {
@@ -555,16 +576,16 @@ void pfh_get_stroke_outline_points(pfh_vec2_buff *dest, const pfh_stroke_point s
 			// The start point is tapered, noop
 		} else if (opts->start.cap) {
 			pfh_draw_round_start_cap(
-				&dest,
+				&pfh_buff_startcap,
 				first_point, 
 				pfh_buff_rightpt.elems[0], 
 				PFH_START_CAP_SEGMENTS
 			);
 		} else {
 			pfh_draw_flat_start_cap(
-				&dest,
+				&pfh_buff_startcap,
 				first_point,
-				pfh_buff_leftpt->elems[0], 
+				dest->elems[dest_start_len],
 				pfh_buff_rightpt.elems[0]
 			);
 		}
