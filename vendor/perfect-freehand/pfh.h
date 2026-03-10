@@ -52,6 +52,7 @@ void pfh_get_stroke_outline_points(pfh_vec2_buff *dest, const pfh_stroke_point s
 #include <limits.h>
 #include <float.h>
 #include <string.h>
+#include <assert.h>
 
 #define PFH_END_NOISE_THRESHOLD 3
 #define PFH_MIN_STREAMLINE_T 0.15
@@ -84,7 +85,8 @@ void pfh_get_stroke_outline_points(pfh_vec2_buff *dest, const pfh_stroke_point s
                         if ((buff)->capacity == 0)                         \
                                 (buff)->capacity = PFH_BUFF_INIT_CAPACITY; \
                                                                            \
-                        (buff)->capacity *= PFH_BUFF_GROW_FACTOR;          \
+                        while (total >= (buff)->capacity)                  \
+                                (buff)->capacity *= PFH_BUFF_GROW_FACTOR;  \
                         (buff)->elems = pfh_realloc(                       \
                             (buff)->elems,                                 \
                             (buff)->capacity * sizeof(*(buff)->elems));    \
@@ -200,9 +202,9 @@ void pfh_get_stroke_points(pfh_stroke_point_buff *dest, const pfh_point pts[], s
 	bool reached_min_len = false;
 	float running_length = 0;
 
-	const max = pts_len - 1;
-	for (int i = 1; i < pts_len && dest->len < dest->capacity; i++) {
-		pfh_stroke_point *prev = dest + dest->len - 1;
+	size_t max = pts_len - 1;
+	for (int i = 1; i < pts_len; i++) {
+		pfh_stroke_point *prev = dest->elems + dest->len - 1;
 		pfh_point point = (opts->is_complete && i == max) ?
 			pts[pts_len-1] : // just add last point. otherwise, interpolate a new point with t
 			(pfh_point){ pfh_vec2_lrp(prev->point.coord, pts[i].coord, t), pts[i].pressure };
@@ -225,14 +227,13 @@ void pfh_get_stroke_points(pfh_stroke_point_buff *dest, const pfh_point pts[], s
 
 		pfh_buff_push(dest, ((pfh_stroke_point){
 			.point = point,
-			.vector = uni(vec_diff),
+			.vector = pfh_vec2_uni(vec_diff),
 			.distance = dist,
-			running_length,
+			.running_length = running_length,
 		}));
 	}
 
 	dest->elems[0].vector = dest->len > 1 ? dest->elems[1].vector : (pfh_vec2){0, 0};
-	return dest->len;
 }
 
 static inline void pfh_draw_dot(pfh_vec2_buff *dest, pfh_vec2 center, float radius)
@@ -247,7 +248,7 @@ static inline void pfh_draw_dot(pfh_vec2_buff *dest, pfh_vec2 center, float radi
 }
 static inline void pfh_draw_round_start_cap(pfh_vec2_buff *dest, pfh_vec2 center, pfh_vec2 right_point, float segments)
 {
-	float step = 1 / segments;
+	float step = 1.0f / segments;
 
 	pfh_buff_reserve(dest, dest->len + segments);
 	for (float t = step; t <= 1; t += step)
@@ -356,7 +357,7 @@ void pfh_get_stroke_outline_points(pfh_vec2_buff *dest, const pfh_stroke_point s
 	pfh_vec2_buff *pfh_buff_leftpt = dest;
 
 	if (stroke_pts_len == 0 || opts->size <= 0)
-		return 0;
+		return;
 
 	const float total_length = stroke_pts[stroke_pts_len - 1].running_length;
 
@@ -400,9 +401,7 @@ void pfh_get_stroke_outline_points(pfh_vec2_buff *dest, const pfh_stroke_point s
 	skipping the first and last points, which will get caps later on.
 	*/
 	for (int i = 0; i < stroke_pts_len; i++) {
-		// let { pressure } = stroke_pts[i]
-		// const { point, vector, distance, running_length } = stroke_pts[i]
-		const is_last_pt = i == stroke_pts_len - 1;
+		bool is_last_pt = i == stroke_pts_len - 1;
 
 		// Removes noise from the end of the line
 		if (!is_last_pt && total_length - stroke_pts[i].running_length < PFH_END_NOISE_THRESHOLD)
@@ -478,7 +477,7 @@ void pfh_get_stroke_outline_points(pfh_vec2_buff *dest, const pfh_stroke_point s
 			pfh_vec2 offset = pfh_vec2_per(prev_vec);
 			offset = pfh_vec2_mul_s(offset, radius);
 
-			const step = 1 / PFH_CORNER_CAP_SEGMENTS;
+			float step = 1.0f / PFH_CORNER_CAP_SEGMENTS;
 			for (float t = 0; t <= 1; t += step) {
 				tmp_left_pt = pfh_vec2_sub(stroke_pts[i].point.coord, offset);
 				tmp_left_pt = pfh_vec2_rot_around(tmp_left_pt, stroke_pts[i].point.coord, PFH_FIXED_PI * t);
