@@ -124,6 +124,7 @@ enum mode {
 	MODE_DRAW,
 	MODE_COMMAND,
 	MODE_TEXT,
+	MODE_DRAG,
 };
 
 
@@ -180,6 +181,7 @@ static struct canvas canvas;
 
 static bool is_drawing_stroke = false;
 static bool is_deleting_stroke = false;
+static bool is_selecting_obj = false;
 
 static const color *colors_primary;
 static const color *colors_secondary;
@@ -221,7 +223,7 @@ static const pfh_stroke_opts STROKE_OPTS = {
 
 static struct text_obj *text_in_edit;
 
-static struct da_object_ptr *selected_objs = NULL;
+static struct da_object_ptr *selected_obj_da = NULL;
 
 /* CMD_HIST */
 static struct cmd cmd_curr;
@@ -553,6 +555,12 @@ void mode_switch_text(void)
 	sapp_show_mouse(true);
 }
 
+void mode_switch_drag(void)
+{
+	mode = MODE_DRAG;
+	sapp_show_mouse(false);
+}
+
 /* MODE_COMMAND */
 
 void command_exec(const char *str)
@@ -578,9 +586,6 @@ void command_exec(const char *str)
 
 void command_mode_event(const sapp_event *e)
 {
-	if (mode != MODE_COMMAND)
-		return;
-
 	if (e->type == SAPP_EVENTTYPE_CHAR && status_line_len < STATUS_LINE_MAX-1) {
 		status_line[status_line_len++] = e->char_code;
 		return;
@@ -615,8 +620,7 @@ void text_mode_event(const sapp_event *e)
 {
 	struct text_obj *t = text_in_edit;
 
-	if (mode != MODE_TEXT || !t)
-		return;
+	if (!t) return;
 
 	if (e->type == SAPP_EVENTTYPE_CHAR)
 		gapbuf_insert(&t->buf, (unsigned char)e->char_code);
@@ -641,6 +645,21 @@ void text_mode_event(const sapp_event *e)
 	case SAPP_KEYCODE_ENTER:
 		gapbuf_insert(&t->buf, (unsigned char)'\n');
 		break;
+	case SAPP_KEYCODE_ESCAPE:
+		mode_switch_drawing();
+		break;
+	default: break;
+	}
+}
+
+/* MODE_DRAG */
+
+void drag_mode_event(const sapp_event *e)
+{
+	if (e->type != SAPP_EVENTTYPE_KEY_DOWN)
+		return;
+
+	switch (e->key_code) {
 	case SAPP_KEYCODE_ESCAPE:
 		mode_switch_drawing();
 		break;
@@ -785,7 +804,6 @@ void draw_mode_event(const sapp_event *e)
 	draw_mode_event_mouse(e);
 	draw_mode_event_camera(e);
 
-	/* Mode transitions */
 	switch (e->type) {
 	case SAPP_EVENTTYPE_CHAR: 
 		if (e->char_code == ':') {
@@ -875,6 +893,10 @@ void draw_mode_event(const sapp_event *e)
 			is_deleting_stroke = true;
 			break;
 
+		case SAPP_KEYCODE_LEFT_SHIFT:
+			is_selecting_obj = true;
+			break;
+
 		case SAPP_KEYCODE_M:
 			cmd_save_idx = cmd_hist.cursor;
 			break;
@@ -896,8 +918,12 @@ void draw_mode_event(const sapp_event *e)
 		active_colors = &colors_primary;
 		break;
 	case SAPP_EVENTTYPE_KEY_UP:
+		is_selecting_obj = false;
+		if (e->key_code == SAPP_KEYCODE_LEFT_SHIFT) {
+			mode_switch_drag();
+		}
+
 		if (e->key_code == SAPP_KEYCODE_X) {
-			is_deleting_stroke = false;
 			draw_mode_stroke_end(&cmd_hist, &cmd_curr); /* no weird shenanigans mid draw */
 
 			idx = stroke_ctx_closest(&canvas.stroke_ctx, mouse_world);
@@ -1108,8 +1134,8 @@ void init(void)
 	stm_setup();
 
 	canvas = canvas_create_empty();
-	selected_objs = da_object_ptr_create(DA_INITIAL_CAPACITY);
-	selected_objs = da_object_ptr_append(selected_objs, NULL);
+	selected_obj_da = da_object_ptr_create(DA_INITIAL_CAPACITY);
+	selected_obj_da = da_object_ptr_append(selected_obj_da, NULL);
 
 	clear_colors = COLORS_BACKGROUND;
 	colors_primary = COLORS_YELLOW;
@@ -1154,6 +1180,9 @@ void event(const sapp_event *e)
 		break;
 	case MODE_TEXT:
 		text_mode_event(e);
+		break;
+	case MODE_DRAG:
+		drag_mode_event(e);
 		break;
 	case MODE_COMMAND:
 		command_mode_event(e);
